@@ -1,6 +1,6 @@
 /* ============================================================
    IMusic - Backend Proxy for YouTube Music InnerTube API,
-   Multi-Engine Synchronized Lyrics, and Audio Stream Proxy
+   Multi-Engine Synchronized Lyrics, and Native Android Audio Stream
    ============================================================ */
 
 const express = require('express');
@@ -214,27 +214,55 @@ function cached(key, ttlMs, fn) {
   });
 }
 
-/* ---------------- AUDIO STREAMING (Invidious Direct Proxy - Anti 403) ---------------- */
+/* ---------------- AUDIO STREAMING ROUTE (Native Mobile Player Proxy) ---------------- */
 app.get('/api/stream', async (req, res) => {
   const videoId = String(req.query.videoId || '').trim();
   if (!videoId || !/^[\w-]{6,20}$/.test(videoId)) {
     return res.status(400).send('Invalid videoId');
   }
 
-  const invidiousInstances = [
-    'https://yt.artemislena.eu',
-    'https://invidious.privacydev.net',
-    'https://inv.nadeko.net',
-    'https://yewtu.be',
-  ];
-
-  const randomInstance = invidiousInstances[Math.floor(Math.random() * invidiousInstances.length)];
-
   try {
-    const streamUrl = `${randomInstance}/latest_version?id=${encodeURIComponent(videoId)}&itag=140&local=true`;
-    return res.redirect(302, streamUrl);
+    const resp = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11; Pixel 5)',
+      },
+      body: JSON.stringify({
+        context: {
+          client: {
+            clientName: 'ANDROID',
+            clientVersion: '19.09.37',
+            androidSdkVersion: 30,
+            hl: 'id',
+            gl: 'ID',
+          },
+        },
+        videoId: videoId,
+        playbackContext: {
+          contentPlaybackContext: {
+            html5Preference: 'HTML5_PREF_WANTS',
+          },
+        },
+      }),
+    });
+
+    if (!resp.ok) throw new Error('Failed to fetch player data');
+    const data = await resp.json();
+
+    const formats = (data.streamingData?.adaptiveFormats || []).concat(data.streamingData?.formats || []);
+    const audioFormat = formats
+      .filter((f) => f.mimeType && f.mimeType.startsWith('audio/') && f.url)
+      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
+
+    if (audioFormat && audioFormat.url) {
+      return res.redirect(302, audioFormat.url);
+    }
+
+    const backupUrl = `https://invidious.privacydev.net/latest_version?id=${encodeURIComponent(videoId)}&itag=140&local=true`;
+    return res.redirect(302, backupUrl);
   } catch (err) {
-    console.error('Stream error:', err);
+    console.error('Streaming error:', err);
     res.status(500).send('Stream error');
   }
 });
