@@ -1,5 +1,5 @@
 /* ============================================================
-   Rich Music — SPA frontend
+   IMusic — SPA frontend
    Streams via HTML5 Native Audio Proxy (Background & Sleep Playback Support),
    Metadata via local proxy to YouTube Music, Synced lyrics via LRCLIB.
    ============================================================ */
@@ -160,7 +160,7 @@ const Library = {
   },
 };
 
-/* ================= HTML5 Native Player State ================= */
+/* ================= HTML5 Native Audio Player State ================= */
 const Player = {
   audio: new Audio(),
   ready: true,
@@ -188,7 +188,7 @@ Player.audio.preload = 'auto';
 Player.audio.addEventListener('ended', () => {
   if (Player.repeat === 2) {
     Player.audio.currentTime = 0;
-    Player.audio.play();
+    Player.audio.play().catch(() => {});
   } else {
     nextTrack(true);
   }
@@ -331,7 +331,7 @@ function restoreQueue() {
   renderPlayButtons();
   $('#miniplayer').classList.remove('hidden');
   document.body.classList.add('has-player', 'paused');
-  document.title = `${s.title} • Rich Music`;
+  document.title = `${s.title} • IMusic`;
   applyTint(s.videoId || s.title);
   const shOn = Player.shuffle;
   $('#mini-shuffle') && $('#mini-shuffle').classList.toggle('on', shOn);
@@ -384,7 +384,7 @@ async function startCurrent() {
   updateLikeButtons();
   $('#miniplayer').classList.remove('hidden');
   document.body.classList.add('has-player');
-  document.title = `${s.title} • Rich Music`;
+  document.title = `${s.title} • IMusic`;
   applyTint(s.videoId || s.title);
 
   if ('mediaSession' in navigator) {
@@ -395,7 +395,7 @@ async function startCurrent() {
     navigator.mediaSession.playbackState = 'playing';
     navigator.mediaSession.setActionHandler('previoustrack', prevTrack);
     navigator.mediaSession.setActionHandler('nexttrack', () => nextTrack(false));
-    navigator.mediaSession.setActionHandler('play', () => Player.audio.play());
+    navigator.mediaSession.setActionHandler('play', () => Player.audio.play().catch(() => {}));
     navigator.mediaSession.setActionHandler('pause', () => Player.audio.pause());
     navigator.mediaSession.setActionHandler('seekto', (details) => {
       if (details.seekTime) Player.audio.currentTime = details.seekTime;
@@ -447,10 +447,10 @@ function nextTrack(auto) {
     togglePlay();
     return;
   }
-  if (Player.repeat === 2 && auto) { 
-    Player.audio.currentTime = 0; 
-    Player.audio.play(); 
-    return; 
+  if (Player.repeat === 2 && auto) {
+    Player.audio.currentTime = 0;
+    Player.audio.play().catch(() => {});
+    return;
   }
   if (!Player.queue.length) return;
   let ni;
@@ -487,7 +487,7 @@ function togglePlay() {
     if (!hasRadio) fetchQueue(s);
     return;
   }
-  if (Player.audio.paused) Player.audio.play();
+  if (Player.audio.paused) Player.audio.play().catch(() => {});
   else Player.audio.pause();
 }
 function playPendingSong() {
@@ -625,7 +625,7 @@ function renderLyrics() {
     c.innerHTML = L.lines.map((l, i) => `<div class="lyric-line" data-i="${i}" data-t="${l.t}">${esc(l.text) || '♪'}</div>`).join('');
     $$('.lyric-line', c).forEach((el) => el.addEventListener('click', () => { 
       Player.audio.currentTime = parseFloat(el.dataset.t); 
-      Player.audio.play(); 
+      Player.audio.play().catch(() => {}); 
     }));
   } else if (L.plain) {
     c.innerHTML = `<div class="lyric-plain">${esc(L.plain)}</div>`;
@@ -831,11 +831,35 @@ function renderQueue() {
   $$('.btn-qrm', el).forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); removeQueued(Number(b.dataset.qi)); }));
   $$('.btn-qup', el).forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); moveQueued(Number(b.dataset.qi), -1); }));
   $$('.btn-qdn', el).forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); moveQueued(Number(b.dataset.qi), 1); }));
+  if (window.matchMedia('(min-width: 861px)').matches) {
+    $$('.track.q-user', el).forEach((row) => {
+      row.draggable = true;
+      row.addEventListener('dragstart', (e) => {
+        e.dataTransfer.setData('text/plain', row.dataset.qi);
+        e.dataTransfer.effectAllowed = 'move';
+        row.classList.add('dragging');
+      });
+      row.addEventListener('dragend', () => row.classList.remove('dragging'));
+      row.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; row.classList.add('drag-over'); });
+      row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
+      row.addEventListener('drop', (e) => {
+        e.preventDefault();
+        row.classList.remove('drag-over');
+        const from = Number(e.dataTransfer.getData('text/plain'));
+        const to = Number(row.dataset.qi);
+        if (!Number.isFinite(from) || !Number.isFinite(to) || from === to) return;
+        if (from <= Player.index || to <= Player.index) return;
+        if (!Player.queue[from] || !Player.queue[from]._user || !Player.queue[to] || !Player.queue[to]._user) return;
+        const [item] = Player.queue.splice(from, 1);
+        Player.queue.splice(to, 0, item);
+        renderQueue();
+      });
+    });
+  }
   const clr = $('#q-clear', el);
   if (clr) clr.addEventListener('click', clearUserQueue);
   persistQueue();
 }
-
 async function loadRelated(force = false) {
   const el = $('#related-list');
   if (!el) return;
@@ -905,7 +929,7 @@ async function loadRelated(force = false) {
   if (sameSong()) renderFail();
 }
 
-/* ================= download (via converter service, direct save) ================= */
+/* ================= download ================= */
 const activeDownloads = new Set();
 function downloadFilename(song) {
   const t = displayTitle(song && song.title) || 'track';
@@ -979,13 +1003,14 @@ function normalizeDuration(s) {
 function displayTitle(t) {
   const raw = String(t || '').trim();
   if (!raw) return '';
-  return raw
+  const cleaned = raw
     .replace(/\s*[\(\[]\s*official\s*(hd\s*)?(4k\s*)?(music\s*)?(lyric(s)?\s*)?(audio|video|visualizer|mv)[^\)\]]*[\)\]]/gi, '')
     .replace(/\s*[\(\[]\s*(official\s*)?(hd\s*)?(music\s*)?(lyric(s)?\s*)?(audio|video|visualizer|mv)[^\)\]]*[\)\]]/gi, '')
     .replace(/\s*[\(\[]\s*(official\s*)?(4k|hd|hq|8d(?:\s*audio)?|1080p|720p)\s*[\)\]]/gi, '')
     .replace(/\s*-\s*(official|lyric(s)?|audio|video|visualizer|topic).*$/gi, '')
     .replace(/\s{2,}/g, ' ')
-    .trim() || raw;
+    .trim();
+  return cleaned || raw;
 }
 function normalizeSong(s) {
   if (!s) return s;
@@ -1141,6 +1166,7 @@ function bindItems(root) {
     const moreBtn = $('.btn-more', el);
     if (moreBtn) moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
+      const qi = Number(row.dataset.qi);
       openSongMenu(songFromItem(it), {
         plId: it.plId || el.dataset.pl,
         plIndex: it.plIndex != null ? it.plIndex : (el.dataset.pi !== undefined && el.dataset.pi !== '' ? Number(el.dataset.pi) : undefined),
@@ -1228,6 +1254,7 @@ function setActiveNav(id) {
   });
 }
 
+/* ---- Your Library sidebar ---- */
 function renderSidebarLibrary() {
   const el = $('#lib-list');
   if (!el) return;
@@ -1401,6 +1428,8 @@ function topResultHTML(it) {
     </div>
   </button>`;
 }
+
+/* FIXED SEARCH RENDERING */
 function searchResultsHTML(sections) {
   if (!sections || !sections.length) {
     return emptyHTML('No results', 'Try a different spelling or another artist, song, or playlist.', { ic: 'i-search' });
@@ -1435,11 +1464,12 @@ function searchResultsHTML(sections) {
     if (!items.length) return;
     const title = SEARCH_TYPE_LABEL[t];
     html += (t === 'song' || t === 'video')
-      ? `<div class="shelf"><div class="shelf-title">${title}</div><div class="track-list">${items.map(trackRowHTML).join('')}</div></div>`
+      ? `<div class="shelf"><div class="shelf-title">${title}</div><div class="track-list">${items.map((i) => trackRowHTML(i)).join('')}</div></div>`
       : `<div class="shelf"><div class="shelf-title">${title}</div>${carouselHTML(items.map(cardHTML).join(''))}</div>`;
   });
   return html || emptyHTML('No results', 'Try a different spelling or another artist, song, or playlist.', { ic: 'i-search' });
 }
+
 function relatedSectionsHTML(sections) {
   return (sections || []).map((sec) => {
     const items = sec.items || [];
@@ -1512,6 +1542,12 @@ function bindSearchChrome(view, q, filter) {
     removeRecentSearch(b.dataset.rm);
     const chip = b.closest('.recent-chip');
     if (chip) chip.remove();
+    if (!$('.recent-chip', view)) {
+      const head = $('.recent-head', view);
+      const row = $('.recent-row', view);
+      if (head) head.remove();
+      if (row) row.remove();
+    }
   }));
   const clr = $('#srec-clear');
   if (clr) clr.addEventListener('click', () => { store.set('srec', []); viewSearch(view, '', filter); });
@@ -1737,7 +1773,7 @@ async function importFromLink(url) {
 /* ---- Backup / Restore ---- */
 function backupLibrary() {
   const data = {
-    app: 'rich-music',
+    app: 'imusic',
     version: 2,
     exportedAt: new Date().toISOString(),
     favorites: Library.favorites,
@@ -1756,7 +1792,7 @@ function backupLibrary() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `rich-music-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `imusic-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
@@ -1775,7 +1811,7 @@ function restoreLibrary() {
     reader.onload = () => {
       try {
         const d = JSON.parse(reader.result);
-        if (!d || (d.app !== 'rich-music' && d.app !== 'smw')) throw new Error('Not a Rich Music backup');
+        if (!d || (d.app !== 'imusic' && d.app !== 'rich-music' && d.app !== 'smw')) throw new Error('Bukan file backup IMusic');
         if (Array.isArray(d.favorites)) store.set('fav', d.favorites);
         if (Array.isArray(d.playlists)) store.set('pls', d.playlists);
         if (Array.isArray(d.history)) store.set('hist', d.history);
@@ -1894,7 +1930,7 @@ function viewLocalPlaylist(view, pid) {
   $('#pl-del').addEventListener('click', () => openDeletePlaylist(pid));
 }
 
-/* ---- Browse (album / playlist / artist) ---- */
+/* ---- Browse ---- */
 async function viewBrowse(view, id, kind, extraParams) {
   view.innerHTML = skeletonHTML;
   const d = await api(`/api/browse?id=${encodeURIComponent(id)}${extraParams ? '&params=' + encodeURIComponent(extraParams) : ''}`);
