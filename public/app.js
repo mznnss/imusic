@@ -1,5 +1,5 @@
 /* ============================================================
-   iMusic — SPA frontend
+   Rich Music — SPA frontend
    Streams via the official YouTube IFrame player, metadata via
    the local proxy to YouTube Music, synced lyrics via LRCLIB.
    ============================================================ */
@@ -24,7 +24,6 @@ const fmtTime = (s) => {
 
 function toast(msg) {
   const t = $('#toast');
-  if (!t) return;
   t.textContent = msg;
   t.classList.remove('hidden');
   clearTimeout(toast._t);
@@ -146,6 +145,7 @@ const Library = {
     let h = this.history.filter((s) => s.videoId !== song.videoId);
     h.unshift({ ...song, playedAt: Date.now() });
     store.set('hist', h.slice(0, 100));
+    // play stats (local scrobble)
     const st = store.get('stats', {});
     const k = song.videoId;
     if (!st[k]) st[k] = { title: song.title, artist: song.artist || '', thumbnail: song.thumbnail, plays: 0, secs: 0, last: 0 };
@@ -175,14 +175,17 @@ const Player = {
   speed: 1,
   sbSegments: [],
   sbEnabled: store.get('sb_on', true),
-  hq: store.get('yt_hq', false),
+  hq: store.get('yt_hq', false), // false = YouTube Music audio, true = YouTube max quality
   quality: 'hd720',
   cued: false,
-  pending: null,
+  pending: null, // song shown in Now Playing while previous track keeps playing
   loadId: 0,
   get current() { return this.queue[this.index] || null; },
 };
 
+/* Playback uses the official YouTube IFrame.
+   Default: YouTube Music audio version (official audio / ATV) at hd720.
+   Quality ON: YouTube max (1080p–4K) for the highest audio bitrate. */
 const QUALITY_RANK = ['highres', 'hd2160', 'hd1440', 'hd1080', 'hd720', 'large', 'medium', 'small', 'tiny'];
 const qualityRank = (q) => { const i = QUALITY_RANK.indexOf(q); return i < 0 ? 99 : i; };
 function bestQuality() {
@@ -212,7 +215,9 @@ function updateQualityButton() {
   btn.classList.toggle('on', !!Player.hq);
   const span = btn.querySelector('span');
   if (span) span.textContent = Player.hq ? 'Max' : 'Quality';
-  btn.title = Player.hq ? 'YouTube max quality — tap for standard' : 'Standard audio — tap for max quality';
+  btn.title = Player.hq
+    ? 'YouTube max quality — tap for YouTube Music audio'
+    : 'YouTube Music audio — tap for YouTube max quality';
   document.body.classList.toggle('hq-audio', !!Player.hq);
   syncNpMore();
 }
@@ -220,7 +225,7 @@ function toggleQuality() {
   Player.hq = !Player.hq;
   store.set('yt_hq', Player.hq);
   updateQualityButton();
-  toast(Player.hq ? 'YouTube max quality' : 'Standard audio');
+  toast(Player.hq ? 'YouTube max quality' : 'YouTube Music audio');
   if (Player.cued || !Player.yt || !Player.ready || !Player.current) {
     applyPlaybackQuality();
     return;
@@ -303,7 +308,7 @@ function playSong(song, queue = null, index = null) {
     Player.index = idx;
   } else { Player.queue = [{ ...song, _user: false }]; Player.index = 0; }
   startCurrent();
-  if (!queue || queue.length <= 1) fetchQueue(song);
+  if (!queue || queue.length <= 1) fetchQueue(song); // build radio queue
 }
 
 function userQueueCount() {
@@ -399,7 +404,7 @@ function restoreQueue() {
   renderPlayButtons();
   $('#miniplayer').classList.remove('hidden');
   document.body.classList.add('has-player', 'paused');
-  document.title = `${s.title} • iMusic`;
+  document.title = `${s.title} • Rich Music`;
   applyTint(s.videoId || s.title);
   const shOn = Player.shuffle;
   $('#mini-shuffle') && $('#mini-shuffle').classList.toggle('on', shOn);
@@ -454,7 +459,7 @@ function startCurrent() {
   updateLikeButtons();
   $('#miniplayer').classList.remove('hidden');
   document.body.classList.add('has-player');
-  document.title = `${s.title} • iMusic`;
+  document.title = `${s.title} • Rich Music`;
   applyTint(s.videoId || s.title);
   if ('mediaSession' in navigator) {
     navigator.mediaSession.metadata = new MediaMetadata({
@@ -468,10 +473,13 @@ function startCurrent() {
   }
   loadLyrics(s);
   loadSponsorBlock(s.videoId);
-  Player.relatedBrowseId = null;
+  // refresh related tab lazily
+  Player.relatedBrowseId = null; // stale — belongs to the previous song until fetchQueue returns
   Player.lyricsBrowseId = null;
   $('#related-list').innerHTML = '<div class="loading-note">Loading…</div>';
   Player._relatedLoaded = false;
+  // if the Related tab is currently open, reload it right away for the new song
+  // (small delay so fetchQueue for the new song has started first)
   if ($('#np-related').classList.contains('active') && !$('#nowplaying').classList.contains('hidden')) {
     setTimeout(() => loadRelated(true), 150);
   }
@@ -575,10 +583,12 @@ let _lastTick = null;
 setInterval(() => {
   if (!Player.yt || !Player.ready || !Player.current || !Player.yt.getDuration) return;
   const cur = Player.yt.getCurrentTime() || 0;
+  // local scrobble: accumulate listen time while playing
   const playing = Player.yt.getPlayerState && Player.yt.getPlayerState() === YT.PlayerState.PLAYING;
   const now = Date.now();
   if (playing && _lastTick) Library.addListenTime(Player.current.videoId, Math.min(2, (now - _lastTick) / 1000));
   _lastTick = now;
+  // SponsorBlock auto-skip
   if (playing && Player.sbEnabled && Player.sbSegments.length) {
     const seg = Player.sbSegments.find((g) => cur >= g.start && cur < g.end - 0.3);
     if (seg) {
@@ -588,16 +598,15 @@ setInterval(() => {
   }
   const dur = Player.yt.getDuration() || 0;
   const pct = dur ? (cur / dur) * 100 : 0;
-  const fill = $('#mini-progress-fill');
-  if (fill) fill.style.width = pct + '%';
+  $('#mini-progress-fill').style.width = pct + '%';
   const knob = $('.pb-knob');
   if (knob) knob.style.left = pct + '%';
-  const mc = $('#mini-cur'); if (mc) mc.textContent = fmtTime(cur);
-  const md = $('#mini-dur'); if (md) md.textContent = fmtTime(dur);
+  $('#mini-cur').textContent = fmtTime(cur);
+  $('#mini-dur').textContent = fmtTime(dur);
   if (!isPreviewing() && !seekDragging) {
-    const nr = $('#np-range'); if (nr) nr.value = dur ? Math.round((cur / dur) * 1000) : 0;
-    const nc = $('#np-cur'); if (nc) nc.textContent = fmtTime(cur);
-    const nd = $('#np-dur'); if (nd) nd.textContent = fmtTime(dur);
+    $('#np-range').value = dur ? Math.round((cur / dur) * 1000) : 0;
+    $('#np-cur').textContent = fmtTime(cur);
+    $('#np-dur').textContent = fmtTime(dur);
   }
   if (!isPreviewing()) updateLyricHighlight(cur);
   syncFloatProgress(pct);
@@ -643,7 +652,7 @@ function toggleSB() {
 }
 
 /* ================= lyrics ================= */
-let lyricsReqId = 0;
+let lyricsReqId = 0; // guard against out-of-order responses on fast skips
 async function loadLyrics(song, { silent = false } = {}) {
   if (!song) return;
   const myReq = ++lyricsReqId;
@@ -661,7 +670,8 @@ async function loadLyrics(song, { silent = false } = {}) {
   }
   try {
     const d = await api(`/api/lyrics?title=${encodeURIComponent(title)}&artist=${encodeURIComponent(artist)}&duration=${durationSec}&browseId=${encodeURIComponent(Player.lyricsBrowseId || '')}`);
-    if (myReq !== lyricsReqId) return;
+    if (myReq !== lyricsReqId) return; // a newer request superseded us
+    // never downgrade: keep existing synced lyrics if the retry found less
     if (Player.lyrics.synced && !d.synced) return;
     Player.lyrics = { ...d, lines: d.synced ? parseLRC(d.synced) : [] };
   } catch {
@@ -670,6 +680,8 @@ async function loadLyrics(song, { silent = false } = {}) {
   }
   renderLyrics();
 }
+/* retry once the real duration is known (player loaded after first attempt),
+   or when the first attempt found nothing */
 function maybeRetryLyrics() {
   const s = Player.current;
   if (!s || !Player.yt || !Player.ready || !Player.yt.getDuration) return;
@@ -696,10 +708,9 @@ function renderLyrics() {
   const c = $('#lyrics-container');
   const src = $('#lyrics-source');
   const L = Player.lyrics;
-  if (!c) return;
   if (L.lines.length) {
     c.innerHTML = L.lines.map((l, i) => `<div class="lyric-line" data-i="${i}" data-t="${l.t}">${esc(l.text) || '♪'}</div>`).join('');
-    $$('.lyric-line', c).forEach((el) => el.addEventListener('click', () => { Player.yt && Player.yt.seekTo(parseFloat(el.dataset.t)); Player.yt && Player.yt.playVideo(); }));
+    $$('.lyric-line', c).forEach((el) => el.addEventListener('click', () => { Player.yt.seekTo(parseFloat(el.dataset.t)); Player.yt.playVideo(); }));
   } else if (L.plain) {
     c.innerHTML = `<div class="lyric-plain">${esc(L.plain)}</div>`;
   } else {
@@ -711,7 +722,7 @@ function renderLyrics() {
       loadLyrics(Player.current);
     });
   }
-  if (src) src.textContent = L.source ? `Lyrics provided by ${L.source}` : '';
+  src.textContent = L.source ? `Lyrics provided by ${L.source}` : '';
   lastLyricIdx = -1;
   if (L.lines.length) {
     $('#np-lyric-preview').textContent = '';
@@ -734,14 +745,12 @@ function updateLyricHighlight(cur) {
   if (idx === lastLyricIdx) return;
   lastLyricIdx = idx;
   const c = $('#lyrics-container');
-  if (c) {
-    $$('.lyric-line', c).forEach((el, i) => {
-      el.classList.toggle('active', i === idx);
-      el.classList.toggle('past', i < idx);
-    });
-    const active = c.querySelector('.lyric-line.active');
-    if (active && $('#np-lyrics').classList.contains('active')) active.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }
+  $$('.lyric-line', c).forEach((el, i) => {
+    el.classList.toggle('active', i === idx);
+    el.classList.toggle('past', i < idx);
+  });
+  const active = c.querySelector('.lyric-line.active');
+  if (active && $('#np-lyrics').classList.contains('active')) active.scrollIntoView({ block: 'center', behavior: 'smooth' });
   const line = idx >= 0 ? L.lines[idx].text : '';
   $('#np-lyric-preview').textContent = line;
   syncFloatLyric(line);
@@ -1004,7 +1013,7 @@ async function loadRelated(force = false) {
   if (sameSong()) renderFail();
 }
 
-/* ================= download ================= */
+/* ================= download (via converter service, direct save) ================= */
 const activeDownloads = new Set();
 function downloadFilename(song) {
   const t = displayTitle(song && song.title) || 'track';
@@ -1287,6 +1296,7 @@ function previewSong(song) {
   updateLikeButtons();
   renderPlayButtons();
   resetNpSeek(song);
+  // keep Related for the song that's actually playing
 }
 function openSongNowPlaying(song) {
   if (!song || !song.videoId) return;
@@ -1314,6 +1324,7 @@ const NAV = [
 ];
 function renderNav() {
   const html = NAV.map((n) => `<button class="nav-item" data-id="${n.id}" data-ic="${n.icon}" data-ica="${n.iconActive}" onclick="location.hash='${n.hash}'"><svg class="ic"><use href="#${n.icon}"/></svg><span>${n.label}</span></button>`).join('');
+  // desktop sidebar: only Home + Search (Spotify layout); library lives in its own box
   $('#nav-desktop').innerHTML = NAV.filter((n) => ['home', 'search', 'charts'].includes(n.id))
     .map((n) => `<button class="nav-item" data-id="${n.id}" data-ic="${n.icon}" data-ica="${n.iconActive}" onclick="location.hash='${n.hash}'"><svg class="ic"><use href="#${n.icon}"/></svg><span>${n.label}</span></button>`).join('');
   $('#nav-mobile').innerHTML = html;
@@ -1328,6 +1339,7 @@ function setActiveNav(id) {
   });
 }
 
+/* ---- Your Library sidebar (Spotify left rail) ---- */
 function renderSidebarLibrary() {
   const el = $('#lib-list');
   if (!el) return;
@@ -1443,6 +1455,7 @@ async function viewHome(view) {
   loadMixForYou();
 }
 
+/* "Mix for you" — personalized-feel shelf built from your listening history (no account needed) */
 async function loadMixForYou() {
   const hist = Library.history;
   const seeds = [...Library.favorites, ...hist].filter((s) => s.videoId);
@@ -1534,7 +1547,7 @@ function searchResultsHTML(sections) {
     if (!items.length) return;
     const title = SEARCH_TYPE_LABEL[t];
     html += (t === 'song' || t === 'video')
-      ? `<div class="shelf"><div class="shelf-title">${title}</div><div class="track-list">${items.map(trackRowHTML).join('')}</div></div>`
+      ? `<div class="shelf"><div class="shelf-title">${title}</dijoin('')}</div></div>`
       : `<div class="shelf"><div class="shelf-title">${title}</div>${carouselHTML(items.map(cardHTML).join(''))}</div>`;
   });
   return html || emptyHTML('No results', 'Try a different spelling or another artist, song, or playlist.', { ic: 'i-search' });
@@ -1681,6 +1694,9 @@ async function viewCharts(view) {
   bindItems(view);
 }
 
+/* Spotify browse-tile palette (fallback when YT colors are missing) */
+const MOOD_COLORS = ['#1db954','#e13300','#7358ff','#e8115b','#148a08','#dc148c','#bc5900','#8d67ab','#e91429','#1e3264','#537aa1','#af2896','#477d95','#ba5d07','#0d73ec','#8c1932'];
+
 /* ---- Moods ---- */
 async function viewMoods(view) {
   view.innerHTML = `<div class="page-title">Moods & genres</div><div class="loading-note">Loading…</div>`;
@@ -1696,6 +1712,7 @@ function viewStats(view) {
   const rows = Object.entries(st).map(([videoId, v]) => ({ videoId, ...v }));
   const totalPlays = rows.reduce((a, r) => a + r.plays, 0);
   const totalMin = Math.round(rows.reduce((a, r) => a + r.secs, 0) / 60);
+  // top artists
   const byArtist = {};
   rows.forEach((r) => {
     const a = (r.artist || 'Unknown').split(',')[0].trim() || 'Unknown';
@@ -1842,7 +1859,7 @@ async function importFromLink(url) {
 /* ---- backup / restore whole local library as a JSON file ---- */
 function backupLibrary() {
   const data = {
-    app: 'imusic',
+    app: 'rich-music',
     version: 2,
     exportedAt: new Date().toISOString(),
     favorites: Library.favorites,
@@ -1861,7 +1878,7 @@ function backupLibrary() {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `imusic-backup-${new Date().toISOString().slice(0, 10)}.json`;
+  a.download = `rich-music-backup-${new Date().toISOString().slice(0, 10)}.json`;
   a.rel = 'noopener';
   document.body.appendChild(a);
   a.click();
@@ -1880,7 +1897,7 @@ function restoreLibrary() {
     reader.onload = () => {
       try {
         const d = JSON.parse(reader.result);
-        if (!d || (d.app !== 'imusic' && d.app !== 'rich-music' && d.app !== 'smw')) throw new Error('Not a valid backup file');
+        if (!d || (d.app !== 'rich-music' && d.app !== 'smw')) throw new Error('Not a Rich Music backup');
         const hasLib = Array.isArray(d.favorites) || Array.isArray(d.playlists) || Array.isArray(d.saved) || Array.isArray(d.history);
         if (!hasLib) throw new Error('Backup file is empty or invalid');
         if (Array.isArray(d.favorites)) store.set('fav', d.favorites);
@@ -1973,7 +1990,7 @@ function viewLocalPlaylist(view, pid) {
         row.classList.add('dragging');
       });
       row.addEventListener('dragend', () => row.classList.remove('dragging'));
-      row.addEventListener('dragover', (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; row.classList.add('drag-over'); });
+      row.addEventListener('dragover', (e) => { e.preventDefault(); row.classList.add('drag-over'); });
       row.addEventListener('dragleave', () => row.classList.remove('drag-over'));
       row.addEventListener('drop', (e) => {
         e.preventDefault();
@@ -2053,6 +2070,7 @@ async function viewBrowse(view, id, kind, extraParams) {
     });
     bsv.innerHTML = icon(Library.isSaved(id) ? 'i-save-f' : 'i-save') + `<span>${Library.isSaved(id) ? 'Saved' : 'Save'}</span>`;
   });
+  // playing track highlight handled implicitly on rerender
 }
 
 /* ================= song overflow menu ================= */
@@ -2124,7 +2142,7 @@ function openNowPlayingMore() {
     ${row('artist', 'i-search', 'Go to artist')}
     ${row('speed', 'i-clock', `Speed · ${Player.speed}×`)}
     ${row('float', 'i-pip', Player.floatOn ? 'Widget on' : 'Widget')}
-    ${row('quality', 'i-expand', Player.hq ? 'Quality · Max' : 'Quality · Standard')}
+    ${row('quality', 'i-expand', Player.hq ? 'Quality · Max' : 'Quality · YouTube Music')}
     ${row('sb', 'i-next', Player.sbEnabled ? 'SponsorBlock on' : 'SponsorBlock')}`;
   $$('[data-npact]', body).forEach((b) => b.addEventListener('click', () => {
     const a = b.dataset.npact;
@@ -2427,7 +2445,7 @@ $('#mini-play').addEventListener('click', (e) => { e.stopPropagation(); togglePl
 $('#mini-next').addEventListener('click', (e) => { e.stopPropagation(); nextTrack(false); });
 $('#mini-prev').addEventListener('click', (e) => { e.stopPropagation(); prevTrack(); });
 $('#mini-like').addEventListener('click', (e) => { e.stopPropagation(); if (Player.current) Library.toggleFav(Player.current); });
-
+/* open Now Playing from art / title / expand button (Spotify behaviour) */
 const openNP = (e) => {
   e.stopPropagation();
   Player.pending = null;
@@ -2442,7 +2460,7 @@ $('#mini-open').addEventListener('click', openNP);
 const openQueue = (e) => { e.stopPropagation(); openNowPlaying(); switchNPTab('queue'); };
 $('#mini-queue').addEventListener('click', openQueue);
 $('#mini-queue-m').addEventListener('click', openQueue);
-
+/* shuffle / repeat on the bar (synced with Now Playing buttons) */
 $('#mini-shuffle').addEventListener('click', (e) => {
   e.stopPropagation();
   Player.shuffle = !Player.shuffle;
@@ -2460,12 +2478,12 @@ $('#mini-repeat').addEventListener('click', (e) => {
   persistQueue();
   toast(['Repeat off', 'Repeat all', 'Repeat one'][Player.repeat]);
 });
-
+/* volume on the bar */
 $('#mini-volume').addEventListener('input', (e) => {
   if (Player.yt && Player.ready) Player.yt.setVolume(Number(e.target.value));
   $('#np-volume').value = e.target.value;
 });
-
+/* click-to-seek on the bar */
 $('#mini-bar').addEventListener('click', (e) => {
   if (Player.cued || !Player.yt || !Player.ready) return;
   const r = e.currentTarget.getBoundingClientRect();
@@ -2562,6 +2580,7 @@ document.addEventListener('keydown', (e) => {
   if (e.code === 'KeyP') { e.preventDefault(); toggleFloatWidget(); }
 });
 
+/* topbar back / forward (Spotify chrome) */
 $('#nav-back').addEventListener('click', () => history.back());
 $('#nav-fwd').addEventListener('click', () => history.forward());
 $('#lib-new').addEventListener('click', () => go('#/library'));
@@ -2775,6 +2794,7 @@ async function openPipWidget() {
   }
 }
 
+
 let pipArtImg = null;
 let pipArtSrc = '';
 function loadPipArt(url) {
@@ -2784,6 +2804,15 @@ function loadPipArt(url) {
   img.onload = () => { pipArtImg = img; drawPipFrame(); };
   img.onerror = () => { pipArtImg = null; };
   img.src = '/api/thumb?url=' + encodeURIComponent(url);
+}
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
 }
 function currentLyricText() {
   const L = Player.lyrics;
@@ -2989,6 +3018,7 @@ setInterval(() => {
     try { Player.yt.playVideo(); } catch {}
   }
 }, 1500);
+
 
 /* cleanup: unregister any previously installed service worker */
 if ('serviceWorker' in navigator) {
