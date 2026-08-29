@@ -1,6 +1,5 @@
 /* ============================================================
-   IMusic - Backend Proxy for YouTube Music InnerTube API,
-   Multi-Engine Synchronized Lyrics, and Native Android Audio Stream
+   IMusic - Backend Proxy for YouTube Music InnerTube API
    ============================================================ */
 
 const express = require('express');
@@ -37,7 +36,6 @@ async function yt(endpoint, body = {}, query = '') {
   return res.json();
 }
 
-/* ---------------- deep helpers ---------------- */
 function findAll(obj, key, out = []) {
   if (!obj || typeof obj !== 'object') return out;
   if (Array.isArray(obj)) {
@@ -51,9 +49,7 @@ function findAll(obj, key, out = []) {
   return out;
 }
 const findFirst = (obj, key) => findAll(obj, key)[0];
-
-const text = (o) =>
-  o && o.runs ? o.runs.map((r) => r.text).join('') : (o && o.simpleText) || '';
+const text = (o) => (o && o.runs ? o.runs.map((r) => r.text).join('') : (o && o.simpleText) || '');
 
 function normalizeDuration(s) {
   const t = String(s || '').trim();
@@ -72,17 +68,10 @@ function runsInfo(o) {
 }
 
 function thumbs(o) {
-  const t = findAll(o, 'thumbnails')
-    .flat()
-    .filter((x) => x && x.url);
+  const t = findAll(o, 'thumbnails').flat().filter((x) => x && x.url);
   if (!t.length) return null;
   const best = t.reduce((a, b) => ((b.width || 0) >= (a.width || 0) ? b : a));
-  return upscale(best.url);
-}
-function upscale(url) {
-  if (!url) return url;
-  if (url.includes('googleusercontent.com')) return url.replace(/=w\d+-h\d+.*$/, '=w544-h544-l90-rj');
-  return url;
+  return best.url.replace(/=w\d+-h\d+.*$/, '=w544-h544-l90-rj');
 }
 
 function endpointInfo(nav) {
@@ -103,7 +92,6 @@ function endpointInfo(nav) {
   return {};
 }
 
-/* ---------------- item parsers ---------------- */
 function parseTwoRow(r) {
   const nav = r.navigationEndpoint || {};
   let info = endpointInfo(nav);
@@ -132,15 +120,9 @@ function parseTwoRow(r) {
 }
 
 function parseListItem(r) {
-  const cols = (r.flexColumns || []).map((c) =>
-    c.musicResponsiveListItemFlexColumnRenderer ? c.musicResponsiveListItemFlexColumnRenderer.text : null
-  );
+  const cols = (r.flexColumns || []).map((c) => (c.musicResponsiveListItemFlexColumnRenderer ? c.musicResponsiveListItemFlexColumnRenderer.text : null));
   const title = cols[0] ? text(cols[0]) : '';
-  const subtitle = cols
-    .slice(1)
-    .map((c) => text(c))
-    .filter(Boolean)
-    .join(' • ');
+  const subtitle = cols.slice(1).map((c) => text(c)).filter(Boolean).join(' • ');
   let videoId = null;
   if (r.playlistItemData) videoId = r.playlistItemData.videoId;
   if (!videoId && cols[0] && cols[0].runs) {
@@ -184,13 +166,7 @@ function parseSections(contents) {
     if (car) {
       const header = findFirst(car.header || {}, 'title');
       const items = (car.contents || [])
-        .map((c) =>
-          c.musicTwoRowItemRenderer
-            ? parseTwoRow(c.musicTwoRowItemRenderer)
-            : c.musicResponsiveListItemRenderer
-            ? parseListItem(c.musicResponsiveListItemRenderer)
-            : null
-        )
+        .map((c) => (c.musicTwoRowItemRenderer ? parseTwoRow(c.musicTwoRowItemRenderer) : c.musicResponsiveListItemRenderer ? parseListItem(c.musicResponsiveListItemRenderer) : null))
         .filter((x) => x && x.title);
       if (items.length) sections.push({ title: text(header), items });
     } else if (shelf) {
@@ -203,7 +179,6 @@ function parseSections(contents) {
   return sections;
 }
 
-/* ---------------- caching ---------------- */
 const cache = new Map();
 function cached(key, ttlMs, fn) {
   const hit = cache.get(key);
@@ -214,60 +189,6 @@ function cached(key, ttlMs, fn) {
   });
 }
 
-/* ---------------- AUDIO STREAMING ROUTE (Native Mobile Player Proxy) ---------------- */
-app.get('/api/stream', async (req, res) => {
-  const videoId = String(req.query.videoId || '').trim();
-  if (!videoId || !/^[\w-]{6,20}$/.test(videoId)) {
-    return res.status(400).send('Invalid videoId');
-  }
-
-  try {
-    const resp = await fetch('https://www.youtube.com/youtubei/v1/player?prettyPrint=false', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'User-Agent': 'com.google.android.youtube/19.09.37 (Linux; U; Android 11; Pixel 5)',
-      },
-      body: JSON.stringify({
-        context: {
-          client: {
-            clientName: 'ANDROID',
-            clientVersion: '19.09.37',
-            androidSdkVersion: 30,
-            hl: 'id',
-            gl: 'ID',
-          },
-        },
-        videoId: videoId,
-        playbackContext: {
-          contentPlaybackContext: {
-            html5Preference: 'HTML5_PREF_WANTS',
-          },
-        },
-      }),
-    });
-
-    if (!resp.ok) throw new Error('Failed to fetch player data');
-    const data = await resp.json();
-
-    const formats = (data.streamingData?.adaptiveFormats || []).concat(data.streamingData?.formats || []);
-    const audioFormat = formats
-      .filter((f) => f.mimeType && f.mimeType.startsWith('audio/') && f.url)
-      .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0))[0];
-
-    if (audioFormat && audioFormat.url) {
-      return res.redirect(302, audioFormat.url);
-    }
-
-    const backupUrl = `https://invidious.privacydev.net/latest_version?id=${encodeURIComponent(videoId)}&itag=140&local=true`;
-    return res.redirect(302, backupUrl);
-  } catch (err) {
-    console.error('Streaming error:', err);
-    res.status(500).send('Stream error');
-  }
-});
-
-/* ---------------- YTM API ROUTES ---------------- */
 app.get('/api/home', async (req, res) => {
   try {
     const data = await cached('home_ID', 10 * 60 * 1000, async () => {
@@ -303,25 +224,6 @@ app.get('/api/charts', async (req, res) => {
     res.json(data);
   } catch (e) {
     res.status(500).json({ error: e.message });
-  }
-});
-
-/* SponsorBlock segments */
-app.get('/api/sponsorblock', async (req, res) => {
-  try {
-    const vid = String(req.query.videoId || '');
-    const cats = encodeURIComponent(JSON.stringify(['sponsor', 'selfpromo', 'interaction', 'intro', 'outro', 'music_offtopic']));
-    const r = await fetch(`https://sponsor.ajay.app/api/skipSegments?videoID=${encodeURIComponent(vid)}&categories=${cats}`);
-    if (r.status === 404) return res.json({ segments: [] });
-    if (!r.ok) return res.json({ segments: [] });
-    const arr = await r.json();
-    res.json({
-      segments: arr
-        .filter((s) => s.actionType === 'skip')
-        .map((s) => ({ category: s.category, start: s.segment[0], end: s.segment[1] })),
-    });
-  } catch {
-    res.json({ segments: [] });
   }
 });
 
@@ -362,9 +264,7 @@ app.get('/api/search', async (req, res) => {
     const sections = [];
     const shelves = findAll(d, 'musicShelfRenderer');
     for (const shelf of shelves) {
-      const items = (shelf.contents || [])
-        .map((c) => (c.musicResponsiveListItemRenderer ? parseListItem(c.musicResponsiveListItemRenderer) : null))
-        .filter((x) => x && x.title);
+      const items = (shelf.contents || []).map((c) => (c.musicResponsiveListItemRenderer ? parseListItem(c.musicResponsiveListItemRenderer) : null)).filter((x) => x && x.title);
       if (items.length) sections.push({ title: text(shelf.title), items });
     }
     if (!sections.length) {
@@ -385,15 +285,7 @@ app.get('/api/search', async (req, res) => {
       const info = endpointInfo(findFirst(top.title || {}, 'navigationEndpoint') || (top.title.runs && top.title.runs[0].navigationEndpoint));
       sections.unshift({
         title: 'Top result',
-        items: [
-          {
-            type: info.videoId ? 'song' : info.browseType || 'song',
-            title: text(top.title),
-            subtitle: text(top.subtitle),
-            thumbnail: thumbs(top.thumbnail),
-            ...info,
-          },
-        ],
+        items: [{ type: info.videoId ? 'song' : info.browseType || 'song', title: text(top.title), subtitle: text(top.subtitle), thumbnail: thumbs(top.thumbnail), ...info }],
       });
     }
     res.json({ sections });
@@ -405,23 +297,19 @@ app.get('/api/search', async (req, res) => {
 app.get('/api/suggest', async (req, res) => {
   try {
     const d = await yt('music/get_search_suggestions', { input: req.query.q || '' });
-    const sugg = findAll(d, 'searchSuggestionRenderer').map((s) => text(s.suggestion));
-    res.json({ suggestions: sugg });
+    res.json({ suggestions: findAll(d, 'searchSuggestionRenderer').map((s) => text(s.suggestion)) });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-/* queue / radio for a song */
 app.get('/api/next', async (req, res) => {
   try {
     const body = { isAudioOnly: true, tunerSettingValue: 'AUTOMIX_SETTING_NORMAL' };
     if (req.query.videoId) {
       body.videoId = req.query.videoId;
       body.playlistId = req.query.playlistId || `RDAMVM${req.query.videoId}`;
-      body.watchEndpointMusicSupportedConfigs = {
-        watchEndpointMusicConfig: { musicVideoType: 'MUSIC_VIDEO_TYPE_ATV' },
-      };
+      body.watchEndpointMusicSupportedConfigs = { watchEndpointMusicConfig: { musicVideoType: 'MUSIC_VIDEO_TYPE_ATV' } };
     } else if (req.query.playlistId) {
       body.playlistId = req.query.playlistId;
     }
@@ -430,7 +318,7 @@ app.get('/api/next', async (req, res) => {
     const panels = findAll(d, 'playlistPanelVideoRenderer');
     const queue = panels.map((p) => ({
       videoId: p.videoId,
-      title: displayTitle(text(p.title)),
+      title: text(p.title),
       artist: text(p.shortBylineText || p.longBylineText),
       artists: runsInfo(p.longBylineText),
       duration: text(p.lengthText),
@@ -451,29 +339,6 @@ app.get('/api/next', async (req, res) => {
   }
 });
 
-app.get('/api/related', async (req, res) => {
-  try {
-    const d = await yt('browse', { browseId: req.query.browseId });
-    const sl = findFirst(d, 'sectionListRenderer');
-    let sections = sl ? parseSections(sl.contents) : [];
-    for (const g of findAll(d, 'gridRenderer')) {
-      const items = (g.items || [])
-        .map((c) => {
-          if (c.musicTwoRowItemRenderer) return parseTwoRow(c.musicTwoRowItemRenderer);
-          if (c.musicResponsiveListItemRenderer) return parseListItem(c.musicResponsiveListItemRenderer);
-          return null;
-        })
-        .filter((x) => x && x.title);
-      if (items.length) sections.push({ title: text(findFirst(g.header || {}, 'title') || {}), items });
-    }
-    sections = sections.filter((x) => x.items && x.items.length);
-    res.json({ sections });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/* album / playlist / artist / mood pages */
 async function browsePage(rawId, params) {
   let id = rawId || '';
   if (/^(PL|RDCLAK|VLPL|OLAK)/.test(id) && !id.startsWith('VL')) id = 'VL' + id;
@@ -482,12 +347,7 @@ async function browsePage(rawId, params) {
   const d = await yt('browse', body);
 
   let header = null;
-  const hResp =
-    findFirst(d, 'musicResponsiveHeaderRenderer') ||
-    findFirst(d, 'musicDetailHeaderRenderer') ||
-    findFirst(d, 'musicImmersiveHeaderRenderer') ||
-    findFirst(d, 'musicVisualHeaderRenderer') ||
-    findFirst(d, 'musicEditablePlaylistDetailHeaderRenderer');
+  const hResp = findFirst(d, 'musicResponsiveHeaderRenderer') || findFirst(d, 'musicDetailHeaderRenderer') || findFirst(d, 'musicImmersiveHeaderRenderer') || findFirst(d, 'musicVisualHeaderRenderer');
   if (hResp) {
     header = {
       title: text(hResp.title),
@@ -507,9 +367,7 @@ async function browsePage(rawId, params) {
   let tracks = [];
   const shelves = findAll(d, 'musicShelfRenderer').concat(findAll(d, 'musicPlaylistShelfRenderer'));
   for (const shelf of shelves) {
-    const items = (shelf.contents || [])
-      .map((c) => (c.musicResponsiveListItemRenderer ? parseListItem(c.musicResponsiveListItemRenderer) : null))
-      .filter((x) => x && x.title);
+    const items = (shelf.contents || []).map((c) => (c.musicResponsiveListItemRenderer ? parseListItem(c.musicResponsiveListItemRenderer) : null)).filter((x) => x && x.title);
     if (items.length && items.filter((i) => i.videoId).length >= items.length / 2 && !tracks.length) {
       tracks = items;
     }
@@ -520,25 +378,7 @@ async function browsePage(rawId, params) {
   if (sl) sections = parseSections(sl.contents).filter((s) => !s.list || !tracks.length);
   if (tracks.length) sections = sections.filter((s) => !(s.list && s.items[0] && s.items[0].videoId === tracks[0].videoId));
 
-  const grids = findAll(d, 'gridRenderer');
-  for (const g of grids) {
-    const items = (g.items || [])
-      .map((c) => (c.musicTwoRowItemRenderer ? parseTwoRow(c.musicTwoRowItemRenderer) : null))
-      .filter(Boolean);
-    if (items.length) sections.push({ title: text(findFirst(g.header || {}, 'title') || {}), items });
-  }
-
   if (header && !header.thumbnail && tracks[0]) header.thumbnail = tracks[0].thumbnail;
-  if (header && tracks.length) {
-    const ha = (header.artists && header.artists[0]) || (header.strapline ? { name: header.strapline } : null);
-    if (ha && ha.name) {
-      tracks = tracks.map((t) => {
-        if (t.artist || (t.artists && t.artists.length)) return t;
-        return { ...t, artist: ha.name, artists: t.artists && t.artists.length ? t.artists : [ha], artistBrowseId: ha.browseId || t.artistBrowseId };
-      });
-    }
-  }
-
   return { header, tracks, sections, playlistId };
 }
 
@@ -547,344 +387,6 @@ app.get('/api/browse', async (req, res) => {
     res.json(await browsePage(req.query.id, req.query.params));
   } catch (e) {
     res.status(500).json({ error: e.message });
-  }
-});
-
-/* ---------------- DOWNLOAD CONVERTER ---------------- */
-const LOADER_API = 'https://loader.to/ajax/download.php';
-const DL_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-
-app.get('/api/download-start', async (req, res) => {
-  const videoId = String(req.query.videoId || '');
-  if (!/^[\w-]{6,20}$/.test(videoId)) return res.status(400).json({ error: 'bad id' });
-  try {
-    const u = `${LOADER_API}?format=mp3&url=${encodeURIComponent('https://www.youtube.com/watch?v=' + videoId)}`;
-    const r = await fetch(u, { headers: { 'User-Agent': DL_UA, Referer: 'https://loader.to/' } });
-    if (!r.ok) throw new Error(`start -> ${r.status}`);
-    const d = await r.json();
-    if (!d.success || !d.id) throw new Error('converter refused this song');
-    res.json({ jobId: d.id, progressUrl: d.progress_url, title: d.title || null });
-  } catch (e) {
-    res.status(502).json({ error: e.message });
-  }
-});
-
-app.get('/api/download-progress', async (req, res) => {
-  const purl = String(req.query.progressUrl || '');
-  try {
-    const pu = new URL(purl);
-    const host = pu.hostname;
-    const okHost = host === 'loader.to' || host === 'savenow.to' || host === 'affadaffa.com'
-      || host.endsWith('.loader.to') || host.endsWith('.savenow.to') || host.endsWith('.affadaffa.com');
-    if (!okHost) {
-      return res.status(400).json({ error: 'bad progress url' });
-    }
-    const r = await fetch(purl, { headers: { 'User-Agent': DL_UA } });
-    if (!r.ok) throw new Error(`progress -> ${r.status}`);
-    const d = await r.json();
-    res.json({
-      progress: d.progress || 0,
-      done: !!d.success && !!d.download_url,
-      url: d.download_url || null,
-      text: d.text || '',
-    });
-  } catch (e) {
-    res.status(502).json({ error: e.message });
-  }
-});
-
-/* resolve URL */
-app.get('/api/resolve', async (req, res) => {
-  try {
-    const raw = String(req.query.url || '').trim();
-    let u;
-    try { u = new URL(raw.includes('://') ? raw : 'https://' + raw); } catch { return res.status(400).json({ error: 'Invalid URL' }); }
-    const list = u.searchParams.get('list');
-    const v = u.searchParams.get('v');
-    const m = u.pathname.match(/\/(playlist|channel|browse|watch)\/?([^/]*)?/);
-    if (list && !v) return res.json({ kind: 'playlist', id: list });
-    if (v) return res.json({ kind: 'song', videoId: v, playlistId: list || null });
-    if (m && m[1] === 'channel' && m[2]) return res.json({ kind: 'artist', id: m[2] });
-    if (m && m[1] === 'browse' && m[2]) return res.json({ kind: m[2].startsWith('MPRE') ? 'album' : 'playlist', id: m[2] });
-    return res.status(400).json({ error: 'Could not recognize this link.' });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/* ---------------- LYRICS ENGINE ---------------- */
-function displayTitle(t) {
-  const raw = String(t || '').trim();
-  if (!raw) return '';
-  return raw
-    .replace(/\s*[\(\[]\s*official\s*(hd\s*)?(4k\s*)?(music\s*)?(lyric(s)?\s*)?(audio|video|visualizer|mv)[^\)\]]*[\)\]]/gi, '')
-    .replace(/\s*[\(\[]\s*(official\s*)?(hd\s*)?(music\s*)?(lyric(s)?\s*)?(audio|video|visualizer|mv)[^\)\]]*[\)\]]/gi, '')
-    .replace(/\s*[\(\[]\s*(official\s*)?(4k|hd|hq|8d(?:\s*audio)?|1080p|720p)\s*[\)\]]/gi, '')
-    .replace(/\s*-\s*(official|lyric(s)?|audio|video|visualizer|topic).*$/gi, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim() || raw;
-}
-function cleanTitle(t) {
-  return String(t || '')
-    .replace(/\((feat|ft|with|prod)[^)]*\)/gi, '')
-    .replace(/\[(feat|ft|with|prod)[^\]]*\]/gi, '')
-    .replace(/\((official|lyric|lyrics|audio|video|visualizer|music video|mv|hd|4k|remaster(ed)?( \d{4})?|live|acoustic|explicit|clean)[^)]*\)/gi, '')
-    .replace(/\[[^\]]*(official|lyric|audio|video|remaster|visualizer|live|mv)[^\]]*\]/gi, '')
-    .replace(/[\(\[]\s*(4k|hd|hq|8d( audio)?|1080p|720p)\s*[\)\]]/gi, '')
-    .replace(/\s*-\s*(official|lyric(s)?|audio|video|visualizer|topic).*/gi, '')
-    .replace(/\s+/g, ' ')
-    .trim();
-}
-function primaryArtist(a) {
-  return String(a || '')
-    .split(/\s*[,&•·]\s*|\s+(?:feat\.?|ft\.?|with|x|vs\.?)\s+/i)[0]
-    .replace(/\s*-\s*topic$/i, '')
-    .trim();
-}
-function norm(x) {
-  return String(x || '').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]+/g, ' ').trim();
-}
-function simScore(a, b) {
-  a = norm(a); b = norm(b);
-  if (!a || !b) return 0;
-  if (a === b) return 1;
-  if (a.includes(b) || b.includes(a)) return 0.85;
-  const aw = new Set(a.split(' ')), bw = new Set(b.split(' '));
-  let hit = 0;
-  for (const w of aw) if (bw.has(w)) hit++;
-  return hit / Math.max(aw.size, bw.size);
-}
-async function fetchTimeout(url, opts = {}, ms = 4500) {
-  const ac = new AbortController();
-  const t = setTimeout(() => ac.abort(), ms);
-  try {
-    return await fetch(url, { ...opts, signal: ac.signal });
-  } finally { clearTimeout(t); }
-}
-
-async function lyricsOvh(title, artist) {
-  if (!title || !artist) return null;
-  try {
-    const r = await fetchTimeout(`https://api.lyrics.ovh/v1/${encodeURIComponent(artist)}/${encodeURIComponent(title)}`);
-    if (!r.ok) return null;
-    const j = await r.json();
-    const lyr = String(j.lyrics || '').replace(/\r\n/g, '\n').trim();
-    return lyr.length > 24 ? lyr : null;
-  } catch { return null; }
-}
-
-async function neteaseLyrics(title, artist) {
-  try {
-    const q = `${title} ${artist}`.trim();
-    if (!q) return null;
-    const r = await fetchTimeout(
-      `https://music.163.com/api/search/get/web?s=${encodeURIComponent(q)}&type=1&limit=8`,
-      { headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://music.163.com/' } }
-    );
-    if (!r.ok) return null;
-    const j = await r.json();
-    const songs = (((j.result || {}).songs) || []);
-    let best = null, bestScore = 0;
-    for (const song of songs) {
-      const an = (song.artists || []).map((a) => a.name).join(' ');
-      const score = simScore(song.name, title) * 2 + simScore(an, artist);
-      if (score > bestScore) { bestScore = score; best = song; }
-    }
-    if (!best || bestScore < 1.4) return null;
-    const lr = await fetchTimeout(
-      `https://music.163.com/api/song/lyric?id=${best.id}&lv=1&kv=1&tv=-1`,
-      { headers: { 'User-Agent': 'Mozilla/5.0', Referer: 'https://music.163.com/' } }
-    );
-    if (!lr.ok) return null;
-    const L = await lr.json();
-    const synced = (L.lrc && L.lrc.lyric) || '';
-    const hasTime = /\[[0-9]+:[0-9]/.test(synced);
-    if (hasTime && synced.length > 40) {
-      const plain = synced.replace(/\[[^\]]+\]/g, '').replace(/\n{3,}/g, '\n\n').trim();
-      return { synced, plain: plain || null };
-    }
-    const plain = synced.replace(/\[[^\]]+\]/g, '').trim();
-    if (plain.length > 24) return { synced: null, plain };
-    return null;
-  } catch { return null; }
-}
-
-async function lrclibGet(title, artist, duration) {
-  try {
-    const u = `https://lrclib.net/api/get?track_name=${encodeURIComponent(title)}&artist_name=${encodeURIComponent(artist)}${duration ? `&duration=${Math.round(duration)}` : ''}`;
-    const r = await fetchTimeout(u, { headers: { 'User-Agent': 'IMusic/1.0' } }, 4000);
-    if (!r.ok) return null;
-    const j = await r.json();
-    if (j.instrumental) return null;
-    return (j.syncedLyrics || j.plainLyrics) ? j : null;
-  } catch { return null; }
-}
-async function lrclibSearch(params) {
-  try {
-    const qs = new URLSearchParams(params).toString();
-    const r = await fetchTimeout(`https://lrclib.net/api/search?${qs}`, { headers: { 'User-Agent': 'IMusic/1.0' } }, 4000);
-    if (!r.ok) return [];
-    return await r.json();
-  } catch { return []; }
-}
-function pickBest(cands, title, artist, duration) {
-  const dur = Number(duration) || 0;
-  let best = null, bestScore = 0;
-  for (const c of cands) {
-    if (!c || c.instrumental || (!c.syncedLyrics && !c.plainLyrics)) continue;
-    const tScore = simScore(c.trackName || c.name, title);
-    let score = tScore * 2 + simScore(c.artistName, artist);
-    if (dur && c.duration) {
-      const diff = Math.abs(c.duration - dur);
-      if (diff <= 2) score += 1.2;
-      else if (diff <= 5) score += 0.6;
-      else if (diff > 20) score -= 1;
-    }
-    if (c.syncedLyrics) score += 0.8;
-    if (score > bestScore) { bestScore = score; best = c; }
-  }
-  if (!best) return null;
-  if (bestScore >= 1.4) return best;
-  if (simScore(best.trackName || best.name, title) >= 0.85 && bestScore >= 0.95) return best;
-  return null;
-}
-
-async function textylLyrics(title, artist) {
-  const q = `${artist || ''} ${title || ''}`.trim();
-  if (!q) return null;
-  try {
-    const r = await fetchTimeout(`https://api.textyl.co/api/lyrics?q=${encodeURIComponent(q)}`);
-    if (!r.ok) return null;
-    const arr = await r.json();
-    if (!Array.isArray(arr) || arr.length < 4) return null;
-    const synced = arr.map((x) => {
-      const sec = Number(x.seconds) || 0;
-      const m = Math.floor(sec / 60);
-      const s = (sec % 60).toFixed(2).padStart(5, '0');
-      return `[${m}:${s}]${x.lyrics || ''}`;
-    }).join('\n');
-    return synced.length > 40 ? synced : null;
-  } catch { return null; }
-}
-
-function extractYtmLyrics(d) {
-  for (const shelf of findAll(d, 'musicDescriptionShelfRenderer')) {
-    const lyr = text(shelf.description);
-    if (lyr && lyr.length > 20) return lyr;
-  }
-  for (const block of findAll(d, 'formattedDescription')) {
-    const lyr = text(block);
-    if (lyr && lyr.length > 40 && lyr.split('\n').length > 4) return lyr;
-  }
-  return null;
-}
-
-app.get('/api/lyrics', async (req, res) => {
-  const { title = '', artist = '', duration = 0, browseId = '' } = req.query;
-  try {
-    const ct = cleanTitle(title);
-    const pa = primaryArtist(artist);
-    let tUse = ct || title;
-    let aUse = pa || artist;
-    const dash = String(tUse).match(/^(.{2,48}?)\s*[-–—]\s+(.+)$/);
-    if (dash && (!aUse || simScore(dash[1], aUse) >= 0.45)) {
-      aUse = aUse || dash[1];
-      tUse = dash[2];
-    }
-
-    let synced = null, plain = null, source = null;
-
-    if (browseId) {
-      try {
-        const body = {
-          context: { client: { ...CONTEXT.client, hl: 'id', gl: 'ID' } },
-          browseId,
-        };
-        const r = await fetchTimeout(`${YTM}/browse?prettyPrint=false`, {
-          method: 'POST',
-          headers: HEADERS,
-          body: JSON.stringify(body),
-        }, 4500);
-        if (r.ok) {
-          const d = await r.json();
-          const lyr = extractYtmLyrics(d);
-          if (lyr) { plain = lyr; source = 'YouTube Music'; }
-        }
-      } catch {}
-    }
-
-    const exactHits = await Promise.all([
-      lrclibGet(tUse, aUse, duration),
-      lrclibGet(tUse, aUse, 0),
-      title && title !== tUse ? lrclibGet(cleanTitle(title), pa, 0) : null,
-    ]);
-    for (const hit of exactHits) {
-      if (!hit) continue;
-      synced = synced || hit.syncedLyrics || null;
-      plain = plain || hit.plainLyrics || null;
-      source = synced ? 'LRCLIB' : (source || 'LRCLIB');
-      if (synced) break;
-    }
-
-    if (!synced) {
-      const [s1, s2, s3, ne, ovh, tx] = await Promise.all([
-        lrclibSearch({ track_name: tUse, artist_name: aUse }),
-        lrclibSearch({ q: `${tUse} ${aUse}`.trim() }),
-        lrclibSearch({ track_name: tUse }),
-        neteaseLyrics(tUse, aUse),
-        plain ? null : lyricsOvh(tUse, aUse),
-        textylLyrics(tUse, aUse),
-      ]);
-      const best = pickBest([].concat(s1 || [], s2 || [], s3 || []), tUse, aUse, duration);
-      if (best) {
-        synced = best.syncedLyrics || synced;
-        plain = plain || best.plainLyrics;
-        source = best.syncedLyrics ? 'LRCLIB' : (source || 'LRCLIB');
-      }
-      if (!synced && ne && ne.synced) {
-        synced = ne.synced;
-        plain = plain || ne.plain;
-        source = 'NetEase';
-      } else if (!plain && ne && ne.plain) {
-        plain = ne.plain;
-        source = source || 'NetEase';
-      }
-      if (!synced && tx) {
-        synced = tx;
-        source = 'Textyl';
-      }
-      if (!synced && !plain && ovh) {
-        plain = ovh;
-        source = 'lyrics.ovh';
-      }
-    }
-
-    res.json({ synced: synced || null, plain: plain || null, source });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-/* album-art proxy */
-app.get('/api/thumb', async (req, res) => {
-  try {
-    const raw = String(req.query.url || '');
-    const u = new URL(raw);
-    const host = u.hostname;
-    const ok =
-      host.endsWith('ytimg.com') ||
-      host.endsWith('ggpht.com') ||
-      host.endsWith('googleusercontent.com');
-    if (!ok) return res.status(400).end();
-    const r = await fetch(raw, {
-      headers: { 'User-Agent': 'Mozilla/5.0 IMusicThumb/1.0', Accept: 'image/*' },
-    });
-    if (!r.ok) return res.status(502).end();
-    res.setHeader('Content-Type', r.headers.get('content-type') || 'image/jpeg');
-    res.setHeader('Cache-Control', 'public, max-age=86400');
-    res.send(Buffer.from(await r.arrayBuffer()));
-  } catch {
-    res.status(500).end();
   }
 });
 
