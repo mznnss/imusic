@@ -167,7 +167,7 @@ const Player = {
   queue: [],
   index: -1,
   shuffle: false,
-  repeat: 0, // 0 none, 1 all, 2 one
+  repeat: 0,
   lyrics: { synced: null, plain: null, source: null, lines: [] },
   lyricsBrowseId: null,
   relatedBrowseId: null,
@@ -204,8 +204,13 @@ Player.audio.addEventListener('pause', () => {
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
 });
 Player.audio.addEventListener('error', () => {
-  toast('Track unavailable, skipping…');
-  setTimeout(() => nextTrack(true), 800);
+  if (Player.audio.src && Player.audio.src !== window.location.href) {
+    console.warn('Audio playback error for:', Player.current?.title);
+    toast('Track loading failed, trying next track…');
+    setTimeout(() => {
+      if (!Player.audio.paused) nextTrack(true);
+    }, 1500);
+  }
 });
 
 function updateQualityButton() {
@@ -556,7 +561,7 @@ function renderPlayButtons() {
   syncFloatWidget();
 }
 
-/* ================= SponsorBlock / votes / speed / video ================= */
+/* ================= SponsorBlock / speed ================= */
 async function loadSponsorBlock(videoId) {
   Player.sbSegments = [];
   try {
@@ -1166,8 +1171,9 @@ function bindItems(root) {
     const moreBtn = $('.btn-more', el);
     if (moreBtn) moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const qi = Number(row.dataset.qi);
+      const qi = Number(el.dataset.qi);
       openSongMenu(songFromItem(it), {
+        qi: Number.isFinite(qi) ? qi : undefined,
         plId: it.plId || el.dataset.pl,
         plIndex: it.plIndex != null ? it.plIndex : (el.dataset.pi !== undefined && el.dataset.pi !== '' ? Number(el.dataset.pi) : undefined),
       });
@@ -1254,7 +1260,6 @@ function setActiveNav(id) {
   });
 }
 
-/* ---- Your Library sidebar ---- */
 function renderSidebarLibrary() {
   const el = $('#lib-list');
   if (!el) return;
@@ -1429,7 +1434,6 @@ function topResultHTML(it) {
   </button>`;
 }
 
-/* FIXED SEARCH RENDERING */
 function searchResultsHTML(sections) {
   if (!sections || !sections.length) {
     return emptyHTML('No results', 'Try a different spelling or another artist, song, or playlist.', { ic: 'i-search' });
