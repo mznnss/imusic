@@ -5,11 +5,13 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
 <meta name="theme-color" content="#000000" />
 <title>IMusic</title>
-<!-- Apple Music Style Gradient Logo Favicon -->
-<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='25' fill='url(%23g)'/><defs><linearGradient id='g' x1='0' y1='0' x2='1' y2='1'><stop offset='0%25' stop-color='%23fa233b'/><stop offset='100%25' stop-color='%23fb5c74'/></linearGradient></defs><path fill='white' d='M68 25v35.8c-2.3-1.4-5.2-2.3-8.4-2.3-7.5 0-13.6 5-13.6 11.2S52.1 81 59.6 81c7.2 0 13.1-4.6 13.5-10.5h.5V36.7l22-4.5v18.5c-2.3-1.4-5.2-2.3-8.4-2.3-7.5 0-13.6 5-13.6 11.2S79.7 71 87.2 71c7.2 0 13.1-4.6 13.5-10.5h.5V25H68z'/></svg>" />
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" />
+<link rel="icon" type="image/png" sizes="192x192" href="/logo-192.png" />
+<link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=Figtree:wght@400;500;600;700;800;900&display=swap" rel="stylesheet" />
+<link rel="preload" as="image" href="/logo.png" />
 <link rel="stylesheet" href="styles.css" />
 <script>
 try {
@@ -21,14 +23,11 @@ try {
 <body>
 <div id="splash" aria-hidden="true">
   <div class="splash-inner">
-    <div class="splash-logo" style="width:110px;height:110px;border-radius:24px;background:linear-gradient(135deg,#fa233b,#fb5c74);display:flex;align-items:center;justify-content:center;margin:0 auto 16px;box-shadow:0 8px 24px rgba(250,35,59,0.35)">
-      <svg style="width:64px;height:64px;fill:#fff" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-    </div>
+    <img class="splash-logo" src="/logo.png" width="128" height="128" alt="" />
     <div class="splash-name">IMusic</div>
   </div>
 </div>
-
-<!-- Icons Sprite -->
+<!-- Spotify-style icon sprite -->
 <svg xmlns="http://www.w3.org/2000/svg" style="display:none">
   <symbol id="i-home" viewBox="0 0 24 24"><path d="M12.5 3.2a1 1 0 0 0-1 0L3.5 7.8a1 1 0 0 0-.5.9V20a1 1 0 0 0 1 1h5.5v-6h5v6H20a1 1 0 0 0 1-1V8.7a1 1 0 0 0-.5-.9l-8-4.6z"/></symbol>
   <symbol id="i-home-o" viewBox="0 0 24 24"><path d="M12 5.1 5 9.2V19h4v-6h6v6h4V9.2l-7-4.1zm-.5-1.9a1 1 0 0 1 1 0l8 4.6a1 1 0 0 1 .5.9V20a1 1 0 0 1-1 1h-5.5v-6h-5v6H4a1 1 0 0 1-1-1V8.7a1 1 0 0 1 .5-.9l8-4.6z"/></symbol>
@@ -74,9 +73,7 @@ try {
   <aside id="sidebar">
     <div class="side-box">
       <div class="logo">
-        <div style="width:34px;height:34px;border-radius:8px;background:linear-gradient(135deg,#fa233b,#fb5c74);display:flex;align-items:center;justify-content:center;box-shadow:0 3px 10px rgba(250,35,59,0.3)">
-          <svg style="width:20px;height:20px;fill:#fff" viewBox="0 0 24 24"><path d="M12 3v10.55c-.59-.34-1.27-.55-2-.55-2.21 0-4 1.79-4 4s1.79 4 4 4 4-1.79 4-4V7h4V3h-6z"/></svg>
-        </div>
+        <img class="logo-img" src="/logo.png" srcset="/logo-64.png 64w, /logo-192.png 192w, /logo.png 512w" sizes="34px" width="34" height="34" alt="IMusic" />
         <span>IMusic</span>
       </div>
       <nav id="nav-desktop"></nav>
@@ -100,7 +97,7 @@ try {
     </div>
   </aside>
 
-  <!-- Main View -->
+  <!-- Main -->
   <main id="main">
     <div id="topbar">
       <div class="tb-nav">
@@ -120,7 +117,7 @@ try {
     <div id="view"></div>
   </main>
 
-  <!-- Player Bar -->
+  <!-- Player bar (Spotify style) -->
   <div id="miniplayer" class="hidden">
     <div class="pb-left">
       <img id="mini-art" alt="" />
@@ -154,10 +151,10 @@ try {
     </div>
   </div>
 
-  <!-- Bottom Nav (mobile) -->
+  <!-- Bottom nav (mobile) -->
   <nav id="nav-mobile"></nav>
 
-  <!-- Fullscreen Now Playing -->
+  <!-- Now playing (fullscreen) -->
   <div id="nowplaying" class="hidden">
     <div id="np-bg"></div>
     <div class="np-inner">
@@ -202,7 +199,7 @@ try {
             <button id="np-share" class="pill-btn np-extra" title="Share"><svg class="ic"><use href="#i-share"/></svg><span>Share</span></button>
             <button id="np-speed" class="pill-btn np-extra" title="Playback speed"><svg class="ic"><use href="#i-clock"/></svg><span>1×</span></button>
             <button id="np-float" class="pill-btn np-extra" title="Floating widget"><svg class="ic"><use href="#i-pip"/></svg><span>Widget</span></button>
-            <button id="np-quality" class="pill-btn np-extra" title="Toggle audio stream quality"><span>Quality</span></button>
+            <button id="np-quality" class="pill-btn np-extra" title="YouTube Music audio — tap for YouTube max quality"><span>Quality</span></button>
             <button id="np-sb" class="pill-btn np-extra" title="SponsorBlock auto-skip"><svg class="ic"><use href="#i-next"/></svg><span>SB</span></button>
             <div class="np-volume">
               <svg class="ic vol-ic"><use href="#i-volume"/></svg><input type="range" id="np-volume" min="0" max="100" value="100" />
@@ -220,7 +217,7 @@ try {
     </div>
   </div>
 
-  <!-- Modal -->
+  <!-- Add-to-playlist modal -->
   <div id="modal" class="hidden">
     <div class="modal-card">
       <h3 id="modal-title">Add to playlist</h3>
@@ -233,7 +230,7 @@ try {
 
   <div id="toast" class="hidden"></div>
 
-  <!-- Floating Widget -->
+  <!-- Floating mini widget (in-page fallback; also cloned into Document PiP) -->
   <div id="float-widget" class="hidden" aria-label="Floating player">
     <img id="fw-art" alt="" />
     <div class="fw-meta">
@@ -250,9 +247,10 @@ try {
     </div>
   </div>
 
-  <!-- Nodes for Canvas & Fallback Elements -->
-  <canvas id="pip-canvas" width="360" height="640" style="display:none"></canvas>
-  <video id="pip-video" muted playsinline autoplay style="display:none"></video>
+  <!-- hidden YouTube player + canvas/video used for OS Picture-in-Picture (recent apps) -->
+  <div id="yt-holder"><div id="yt-player"></div></div>
+  <canvas id="pip-canvas" width="360" height="640"></canvas>
+  <video id="pip-video" muted playsinline autoplay></video>
 </div>
 <script src="app.js"></script>
 </body>
