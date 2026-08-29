@@ -203,14 +203,15 @@ Player.audio.addEventListener('pause', () => {
   renderPlayButtons();
   if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
 });
-Player.audio.addEventListener('error', () => {
-  if (Player.audio.src && Player.audio.src !== window.location.href) {
-    console.warn('Audio playback error for:', Player.current?.title);
-    toast('Track loading failed, trying next track…');
-    setTimeout(() => {
-      if (!Player.audio.paused) nextTrack(true);
-    }, 1500);
-  }
+Player.audio.addEventListener('error', (e) => {
+  console.warn('Audio tag error:', e);
+  toast('Sedang memuat ulang lagu…');
+  setTimeout(() => {
+    if (Player.audio.paused && Player.current) {
+      Player.audio.src = `/api/stream?videoId=${encodeURIComponent(Player.current.videoId)}&r=${Date.now()}`;
+      Player.audio.play().catch(() => {});
+    }
+  }, 1000);
 });
 
 function updateQualityButton() {
@@ -522,7 +523,6 @@ setInterval(() => {
   const now = Date.now();
   if (playing && _lastTick) Library.addListenTime(Player.current.videoId, Math.min(2, (now - _lastTick) / 1000));
   _lastTick = now;
-  // SponsorBlock auto-skip
   if (playing && Player.sbEnabled && Player.sbSegments.length) {
     const seg = Player.sbSegments.find((g) => cur >= g.start && cur < g.end - 0.3);
     if (seg) {
@@ -829,8 +829,12 @@ function renderQueue() {
     const moreBtn = $('.btn-more', row);
     if (moreBtn) moreBtn.addEventListener('click', (e) => {
       e.stopPropagation();
-      const qi = Number(row.dataset.qi);
-      openSongMenu(songFromItem(it), { qi: Number.isFinite(qi) ? qi : undefined });
+      const qi = Number(el.dataset.qi);
+      openSongMenu(songFromItem(it), {
+        qi: Number.isFinite(qi) ? qi : undefined,
+        plId: it.plId || el.dataset.pl,
+        plIndex: it.plIndex != null ? it.plIndex : (el.dataset.pi !== undefined && el.dataset.pi !== '' ? Number(el.dataset.pi) : undefined),
+      });
     });
   });
   $$('.btn-qrm', el).forEach((b) => b.addEventListener('click', (e) => { e.stopPropagation(); removeQueued(Number(b.dataset.qi)); }));
