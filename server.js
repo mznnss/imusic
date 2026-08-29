@@ -1,11 +1,10 @@
 /* ============================================================
    IMusic - Backend Proxy for YouTube Music InnerTube API,
-   Multi-Engine Synchronized Lyrics, and Native Audio Stream
+   Multi-Engine Synchronized Lyrics, and Audio Stream Proxy
    ============================================================ */
 
 const express = require('express');
 const path = require('path');
-const ytdl = require('@distube/ytdl-core');
 
 const app = express();
 app.use(express.json());
@@ -215,60 +214,29 @@ function cached(key, ttlMs, fn) {
   });
 }
 
-/* ---------------- AUDIO STREAMING (Direct Stream / Anti-Block) ---------------- */
+/* ---------------- AUDIO STREAMING (Invidious Direct Proxy - Anti 403) ---------------- */
 app.get('/api/stream', async (req, res) => {
   const videoId = String(req.query.videoId || '').trim();
   if (!videoId || !/^[\w-]{6,20}$/.test(videoId)) {
     return res.status(400).send('Invalid videoId');
   }
 
-  // 1. Fallback via Piped API Instances (Cepat & Anti-Block Vercel)
-  const pipedInstances = [
-    'https://pipedapi.kavin.rocks',
-    'https://api.piped.privacy.com.de',
-    'https://piped-api.garudalinux.org'
+  const invidiousInstances = [
+    'https://yt.artemislena.eu',
+    'https://invidious.privacydev.net',
+    'https://inv.nadeko.net',
+    'https://yewtu.be',
   ];
 
-  for (const instance of pipedInstances) {
-    try {
-      const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 3500);
-      const resp = await fetch(`${instance}/streams/${videoId}`, { signal: controller.signal });
-      clearTimeout(timeout);
-      
-      if (resp.ok) {
-        const data = await resp.json();
-        const audioStreams = (data.audioStreams || []).sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
-        if (audioStreams.length && audioStreams[0].url) {
-          return res.redirect(302, audioStreams[0].url);
-        }
-      }
-    } catch {}
-  }
+  const randomInstance = invidiousInstances[Math.floor(Math.random() * invidiousInstances.length)];
 
-  // 2. Fallback via ytdl-core
   try {
-    const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const info = await ytdl.getInfo(url, {
-      requestOptions: {
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-        }
-      }
-    });
-    const format = ytdl.chooseFormat(info.formats, {
-      filter: 'audioonly',
-      quality: req.query.hq === '1' ? 'highestaudio' : 'lowestaudio',
-    });
-
-    if (format && format.url) {
-      return res.redirect(302, format.url);
-    }
-  } catch (e) {
-    console.warn('ytdl fallback failed:', e.message);
+    const streamUrl = `${randomInstance}/latest_version?id=${encodeURIComponent(videoId)}&itag=140&local=true`;
+    return res.redirect(302, streamUrl);
+  } catch (err) {
+    console.error('Stream error:', err);
+    res.status(500).send('Stream error');
   }
-
-  res.status(404).send('Stream unavailable');
 });
 
 /* ---------------- YTM API ROUTES ---------------- */
