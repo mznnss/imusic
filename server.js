@@ -1,6 +1,7 @@
 /* ============================================================
-   iMusic - backend proxy for YouTube Music InnerTube API + LRCLIB lyrics
+   iMusic - Backend Proxy for YouTube Music InnerTube API
    ============================================================ */
+
 const express = require('express');
 const path = require('path');
 
@@ -60,7 +61,6 @@ function normalizeDuration(s) {
 }
 
 function runsInfo(o) {
-  // extract artists/albums with browseIds from runs
   const out = [];
   if (!o || !o.runs) return out;
   for (const r of o.runs) {
@@ -106,7 +106,6 @@ function endpointInfo(nav) {
 function parseTwoRow(r) {
   const nav = r.navigationEndpoint || {};
   let info = endpointInfo(nav);
-  // title may browse to album/playlist even if overlay is a watchEndpoint
   if (!info.browseId && r.title && r.title.runs) {
     const tNav = r.title.runs[0] && r.title.runs[0].navigationEndpoint;
     const extra = endpointInfo(tNav || {});
@@ -124,7 +123,6 @@ function parseTwoRow(r) {
     artists: runsInfo(r.subtitle),
     ...info,
   };
-  // circle thumbnails => artist
   if (r.thumbnailRenderer && findFirst(r, 'musicThumbnailRenderer')) {
     const style = findFirst(r, 'musicThumbnailRenderer').thumbnailCrop;
     if (style === 'MUSIC_THUMBNAIL_CROP_CIRCLE') item.type = 'artist';
@@ -172,7 +170,6 @@ function parseListItem(r) {
     album: albums[0] || null,
     ...navInfo,
   };
-  // duration from fixed column
   const fixed = findFirst(r, 'musicResponsiveListItemFixedColumnRenderer');
   if (fixed) item.duration = normalizeDuration(text(fixed.text));
   return item;
@@ -205,7 +202,7 @@ function parseSections(contents) {
   return sections;
 }
 
-/* ---------------- routes ---------------- */
+/* ---------------- caching ---------------- */
 const cache = new Map();
 function cached(key, ttlMs, fn) {
   const hit = cache.get(key);
@@ -223,7 +220,6 @@ app.get('/api/home', async (req, res) => {
       let sections = [];
       let sl = findFirst(d, 'sectionListRenderer');
       if (sl) sections = parseSections(sl.contents);
-      // fetch a few continuations for more shelves
       let cont = sl && sl.continuations && sl.continuations[0] && sl.continuations[0].nextContinuationData;
       let n = 0;
       while (cont && n < 3) {
@@ -255,7 +251,6 @@ app.get('/api/charts', async (req, res) => {
   }
 });
 
-/* SponsorBlock segments (skip non-music parts) */
 app.get('/api/sponsorblock', async (req, res) => {
   try {
     const vid = String(req.query.videoId || '');
@@ -316,7 +311,6 @@ app.get('/api/search', async (req, res) => {
         .filter((x) => x && x.title);
       if (items.length) sections.push({ title: text(shelf.title), items });
     }
-    // Newer general-search layout: flat itemSectionRenderers, one item each
     if (!sections.length) {
       const flat = [];
       const seen = new Set();
@@ -362,7 +356,6 @@ app.get('/api/suggest', async (req, res) => {
   }
 });
 
-/* queue / radio for a song */
 app.get('/api/next', async (req, res) => {
   try {
     const body = { isAudioOnly: true, tunerSettingValue: 'AUTOMIX_SETTING_NORMAL' };
@@ -387,7 +380,6 @@ app.get('/api/next', async (req, res) => {
       thumbnail: thumbs(p.thumbnail),
       selected: !!p.selected,
     }));
-    // lyrics + related browse ids from tabs
     let lyricsBrowseId = null;
     let relatedBrowseId = null;
     for (const tab of findAll(d, 'tabRenderer')) {
@@ -407,7 +399,6 @@ app.get('/api/related', async (req, res) => {
     const d = await yt('browse', { browseId: req.query.browseId });
     const sl = findFirst(d, 'sectionListRenderer');
     let sections = sl ? parseSections(sl.contents) : [];
-    // some related pages use grids instead of carousels/shelves
     for (const g of findAll(d, 'gridRenderer')) {
       const items = (g.items || [])
         .map((c) => {
@@ -418,7 +409,6 @@ app.get('/api/related', async (req, res) => {
         .filter((x) => x && x.title);
       if (items.length) sections.push({ title: text(findFirst(g.header || {}, 'title') || {}), items });
     }
-    // dedupe empty-title dupes & drop empty sections
     sections = sections.filter((x) => x.items && x.items.length);
     res.json({ sections });
   } catch (e) {
@@ -426,7 +416,6 @@ app.get('/api/related', async (req, res) => {
   }
 });
 
-/* album / playlist / artist / mood pages */
 async function browsePage(rawId, params) {
   let id = rawId || '';
   if (/^(PL|RDCLAK|VLPL|OLAK)/.test(id) && !id.startsWith('VL')) id = 'VL' + id;
@@ -434,7 +423,6 @@ async function browsePage(rawId, params) {
   if (params) body.params = params;
   const d = await yt('browse', body);
 
-  // header
   let header = null;
   const hResp =
     findFirst(d, 'musicResponsiveHeaderRenderer') ||
@@ -454,12 +442,10 @@ async function browsePage(rawId, params) {
     if (!header.thumbnail) header.thumbnail = thumbs(hResp);
   }
 
-  // shuffle/radio playlist ids
   let playlistId = null;
   const wpe = findFirst(d, 'watchPlaylistEndpoint');
   if (wpe) playlistId = wpe.playlistId;
 
-  // track list (musicShelfRenderer or playlistShelfRenderer contents)
   let tracks = [];
   const shelves = findAll(d, 'musicShelfRenderer').concat(findAll(d, 'musicPlaylistShelfRenderer'));
   for (const shelf of shelves) {
@@ -471,14 +457,11 @@ async function browsePage(rawId, params) {
     }
   }
 
-  // other sections (carousels: related albums, artist albums etc.)
   let sections = [];
   const sl = findFirst(d, 'sectionListRenderer');
   if (sl) sections = parseSections(sl.contents).filter((s) => !s.list || !tracks.length);
-  // for artist pages the first musicShelf (songs) is in sections too; dedupe
   if (tracks.length) sections = sections.filter((s) => !(s.list && s.items[0] && s.items[0].videoId === tracks[0].videoId));
 
-  // grid (mood/genre pages)
   const grids = findAll(d, 'gridRenderer');
   for (const g of grids) {
     const items = (g.items || [])
@@ -487,9 +470,7 @@ async function browsePage(rawId, params) {
     if (items.length) sections.push({ title: text(findFirst(g.header || {}, 'title') || {}), items });
   }
 
-  // fallback thumbnail from first track
   if (header && !header.thumbnail && tracks[0]) header.thumbnail = tracks[0].thumbnail;
-  // album pages often omit per-track artist; copy from header
   if (header && tracks.length) {
     const ha = (header.artists && header.artists[0]) || (header.strapline ? { name: header.strapline } : null);
     if (ha && ha.name) {
@@ -511,11 +492,10 @@ app.get('/api/browse', async (req, res) => {
   }
 });
 
-/* ---------------- music download via third-party converter (loader.to) ---------------- */
+/* ---------------- download converter ---------------- */
 const LOADER_API = 'https://loader.to/ajax/download.php';
 const DL_UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
 
-/* start a conversion job: returns { jobId, progressUrl } */
 app.get('/api/download-start', async (req, res) => {
   const videoId = String(req.query.videoId || '');
   if (!/^[\w-]{6,20}$/.test(videoId)) return res.status(400).json({ error: 'bad id' });
@@ -531,7 +511,6 @@ app.get('/api/download-start', async (req, res) => {
   }
 });
 
-/* poll job progress: returns { progress (0-1000), done, url } */
 app.get('/api/download-progress', async (req, res) => {
   const purl = String(req.query.progressUrl || '');
   try {
@@ -539,9 +518,7 @@ app.get('/api/download-progress', async (req, res) => {
     const host = pu.hostname;
     const okHost = host === 'loader.to' || host === 'savenow.to' || host === 'affadaffa.com'
       || host.endsWith('.loader.to') || host.endsWith('.savenow.to') || host.endsWith('.affadaffa.com');
-    if (!okHost) {
-      return res.status(400).json({ error: 'bad progress url' });
-    }
+    if (!okHost) return res.status(400).json({ error: 'bad progress url' });
     const r = await fetch(purl, { headers: { 'User-Agent': DL_UA } });
     if (!r.ok) throw new Error(`progress -> ${r.status}`);
     const d = await r.json();
@@ -556,7 +533,6 @@ app.get('/api/download-progress', async (req, res) => {
   }
 });
 
-/* resolve a YT Music / YouTube URL (playlist, album, artist, song) into an app route */
 app.get('/api/resolve', async (req, res) => {
   try {
     const raw = String(req.query.url || '').trim();
@@ -569,24 +545,23 @@ app.get('/api/resolve', async (req, res) => {
     if (v) return res.json({ kind: 'song', videoId: v, playlistId: list || null });
     if (m && m[1] === 'channel' && m[2]) return res.json({ kind: 'artist', id: m[2] });
     if (m && m[1] === 'browse' && m[2]) return res.json({ kind: m[2].startsWith('MPRE') ? 'album' : 'playlist', id: m[2] });
-    return res.status(400).json({ error: 'Could not recognize this link. Paste a YouTube Music playlist/album/song link.' });
+    return res.status(400).json({ error: 'Could not recognize this link.' });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
-/* ---------------- lyrics: multi-strategy matcher ---------------- */
+/* ---------------- lyrics ---------------- */
 function displayTitle(t) {
   const raw = String(t || '').trim();
   if (!raw) return '';
-  const cleaned = raw
+  return raw
     .replace(/\s*[\(\[]\s*official\s*(hd\s*)?(4k\s*)?(music\s*)?(lyric(s)?\s*)?(audio|video|visualizer|mv)[^\)\]]*[\)\]]/gi, '')
     .replace(/\s*[\(\[]\s*(official\s*)?(hd\s*)?(music\s*)?(lyric(s)?\s*)?(audio|video|visualizer|mv)[^\)\]]*[\)\]]/gi, '')
     .replace(/\s*[\(\[]\s*(official\s*)?(4k|hd|hq|8d(?:\s*audio)?|1080p|720p)\s*[\)\]]/gi, '')
     .replace(/\s*-\s*(official|lyric(s)?|audio|video|visualizer|topic).*$/gi, '')
     .replace(/\s{2,}/g, ' ')
-    .trim();
-  return cleaned || raw;
+    .trim() || raw;
 }
 function cleanTitle(t) {
   return String(t || '')
@@ -758,7 +733,6 @@ app.get('/api/lyrics', async (req, res) => {
 
     let synced = null, plain = null, source = null;
 
-    // 1) YouTube Music lyrics
     if (browseId) {
       try {
         const body = {
@@ -778,7 +752,6 @@ app.get('/api/lyrics', async (req, res) => {
       } catch {}
     }
 
-    // 2) LRCLIB exact
     const exactHits = await Promise.all([
       lrclibGet(tUse, aUse, duration),
       lrclibGet(tUse, aUse, 0),
@@ -792,7 +765,6 @@ app.get('/api/lyrics', async (req, res) => {
       if (synced) break;
     }
 
-    // 3) Fuzzy Search fallback
     if (!synced) {
       const [s1, s2, s3, ne, ovh, tx] = await Promise.all([
         lrclibSearch({ track_name: tUse, artist_name: aUse }),
