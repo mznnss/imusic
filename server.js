@@ -215,16 +215,47 @@ function cached(key, ttlMs, fn) {
   });
 }
 
-/* ---------------- NATIVE AUDIO STREAMING ROUTE ---------------- */
+/* ---------------- AUDIO STREAMING (Direct Stream / Anti-Block) ---------------- */
 app.get('/api/stream', async (req, res) => {
   const videoId = String(req.query.videoId || '').trim();
   if (!videoId || !/^[\w-]{6,20}$/.test(videoId)) {
     return res.status(400).send('Invalid videoId');
   }
 
+  // 1. Fallback via Piped API Instances (Cepat & Anti-Block Vercel)
+  const pipedInstances = [
+    'https://pipedapi.kavin.rocks',
+    'https://api.piped.privacy.com.de',
+    'https://piped-api.garudalinux.org'
+  ];
+
+  for (const instance of pipedInstances) {
+    try {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), 3500);
+      const resp = await fetch(`${instance}/streams/${videoId}`, { signal: controller.signal });
+      clearTimeout(timeout);
+      
+      if (resp.ok) {
+        const data = await resp.json();
+        const audioStreams = (data.audioStreams || []).sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+        if (audioStreams.length && audioStreams[0].url) {
+          return res.redirect(302, audioStreams[0].url);
+        }
+      }
+    } catch {}
+  }
+
+  // 2. Fallback via ytdl-core
   try {
     const url = `https://www.youtube.com/watch?v=${videoId}`;
-    const info = await ytdl.getInfo(url);
+    const info = await ytdl.getInfo(url, {
+      requestOptions: {
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+        }
+      }
+    });
     const format = ytdl.chooseFormat(info.formats, {
       filter: 'audioonly',
       quality: req.query.hq === '1' ? 'highestaudio' : 'lowestaudio',
@@ -233,21 +264,11 @@ app.get('/api/stream', async (req, res) => {
     if (format && format.url) {
       return res.redirect(302, format.url);
     }
-
-    // Fallback: piping stream jika direct URL gagal
-    res.setHeader('Content-Type', 'audio/webm');
-    res.setHeader('Accept-Ranges', 'bytes');
-    const stream = ytdl(url, {
-      filter: 'audioonly',
-      quality: req.query.hq === '1' ? 'highestaudio' : 'lowestaudio',
-      highWaterMark: 1 << 25,
-    });
-    stream.on('error', () => { if (!res.headersSent) res.status(500).end(); });
-    stream.pipe(res);
   } catch (e) {
-    console.error('Stream route error:', e.message);
-    if (!res.headersSent) res.status(500).end();
+    console.warn('ytdl fallback failed:', e.message);
   }
+
+  res.status(404).send('Stream unavailable');
 });
 
 /* ---------------- YTM API ROUTES ---------------- */
@@ -289,7 +310,7 @@ app.get('/api/charts', async (req, res) => {
   }
 });
 
-/* SponsorBlock segments (skip non-music parts) */
+/* SponsorBlock segments */
 app.get('/api/sponsorblock', async (req, res) => {
   try {
     const vid = String(req.query.videoId || '');
@@ -576,7 +597,7 @@ app.get('/api/download-progress', async (req, res) => {
   }
 });
 
-/* resolve a YT Music / YouTube URL into an app route */
+/* resolve URL */
 app.get('/api/resolve', async (req, res) => {
   try {
     const raw = String(req.query.url || '').trim();
