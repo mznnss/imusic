@@ -1162,91 +1162,69 @@ function wait(ms) {
    PLAY TRACK
    ============================================================ */
 
-async function playTrack(
-  track,
-  options = {}
-) {
-  track =
-    normalizeTrack(
-      track
-    );
+async function playTrack(track, options = {}) {
+  track = normalizeTrack(track);
 
-  if (
-    !track ||
-    !track.videoId
-  ) {
+  if (!track || !track.videoId) {
     toast(
       'Lagu ini tidak mempunyai YouTube video ID.',
       'error'
     );
-
     return false;
   }
 
-  clearTimeout(
-    Player.retryTimer
-  );
+  clearTimeout(Player.retryTimer);
 
-  Player.retryCount =
-    0;
+  Player.retryCount = 0;
+  Player.loading = true;
+  Player.current = track;
 
-  Player.loading =
-    true;
-
-  Player.current =
-    track;
-
-  if (
-    typeof options.queueIndex ===
-    'number'
-  ) {
-    Player.queueIndex =
-      options.queueIndex;
+  if (typeof options.queueIndex === 'number') {
+    Player.queueIndex = options.queueIndex;
   } else {
-    const index =
-      Player.queue.findIndex(
-        (item) =>
-          sameTrack(
-            item,
-            track
-          )
-      );
+    const index = Player.queue.findIndex(
+      item => sameTrack(item, track)
+    );
 
-    if (
-      index >= 0
-    ) {
-      Player.queueIndex =
-        index;
+    if (index >= 0) {
+      Player.queueIndex = index;
     }
   }
 
   persistPlayerState();
 
   updatePlayerUI();
+  updateLoadingUI(true);
 
-  updateLoadingUI(
-    true
-  );
+  /*
+   * ========================================================
+   * PLAYER HARUS SUDAH READY
+   * ========================================================
+   */
 
-  updateMediaSessionMetadata(
-    track
-  );
+  const player = Player.ytPlayer;
+
+  if (!player || !Player.ytReady) {
+    Player.loading = false;
+
+    updateLoadingUI(false);
+
+    toast(
+      'YouTube Player belum siap. Tunggu sebentar lalu klik lagi.',
+      'error'
+    );
+
+    return false;
+  }
 
   try {
-    const player =
-      await initYouTubePlayer();
-
-    if (
-      !player
-    ) {
-      throw new Error(
-        'YouTube player is unavailable'
-      );
-    }
 
     /*
-     * If another video was playing,
-     * stop it before loading the new one.
+     * ======================================================
+     * PENTING:
+     *
+     * JANGAN ADA await SEBELUM playVideo()
+     * ======================================================
      */
 
     try {
@@ -1254,82 +1232,77 @@ async function playTrack(
     } catch {}
 
     /*
-     * loadVideoById is used only for playback
-     * through YouTube's own embedded player.
+     * Load video
      */
-
-    player.loadVideoById(
-      track.videoId
-    );
+    player.loadVideoById({
+      videoId: track.videoId,
+      startSeconds: 0
+    });
 
     /*
-     * Give the player a short moment to
-     * create the video state before calling play.
+     * LANGSUNG PLAY
+     *
+     * Jangan taruh await di atas baris ini.
      */
-
-    await wait(
-      250
-    );
-
-    try {
-      player.setVolume(
-        Math.round(
-          Player.volume *
-            100
-        )
-      );
-    } catch {}
-
-    /*
-     * playVideo() may be rejected/blocked
-     * by browser autoplay policy.
-     */
-
     player.playVideo();
 
-    Player.current._failed =
-      false;
+    /*
+     * Update state
+     */
+    Player.currentTime = 0;
+    Player.duration = 0;
 
-    Player.loading =
-      false;
+    Player.current._failed = false;
 
-    updateLoadingUI(
-      false
+    Player.loading = false;
+    Player.playing = true;
+
+    updateLoadingUI(false);
+
+    updatePlayButtons(true);
+
+    updatePlayerUI();
+
+    updateMediaSessionMetadata(track);
+
+    updateMediaSessionPlaybackState(
+      'playing'
     );
 
     startProgressTimer();
 
-    updatePlayButtons(
-      true
-    );
-
-    updateMediaSessionMetadata(
-      track
-    );
-
     persistPlayerState();
+
+    saveQueue();
+
+    renderQueue();
+
+    /*
+     * ======================================================
+     * BARU SETELAH PLAY:
+     *
+     * operasi async boleh dilakukan
+     * ======================================================
+     */
 
     loadSponsorSegments(
       track.videoId
-    );
+    ).catch(() => {});
 
     return true;
+
   } catch (error) {
+
     console.error(
       '[playTrack]',
       error
     );
 
-    Player.loading =
-      false;
+    Player.loading = false;
+    Player.playing = false;
 
-    updateLoadingUI(
-      false
-    );
-
-    updatePlayButtons(
-      false
-    );
+    updateLoadingUI(false);
+    updatePlayButtons(false);
 
     toast(
       `Tidak dapat memutar "${track.title}".`,
@@ -1340,75 +1313,78 @@ async function playTrack(
   }
 }
 
-
 /* ============================================================
    PLAY CURRENT
    ============================================================ */
 
 async function playCurrent() {
-  if (
-    !Player.current
-  ) {
-    if (
-      Player.queue.length
-    ) {
-      const index =
-        clamp(
-          Player.queueIndex >=
-            0
-            ? Player.queueIndex
-            : 0,
-          0,
-          Player.queue.length -
-            1
-        );
 
-      return playTrack(
-        Player.queue[index],
-        {
-          queueIndex:
-            index,
-        }
-      );
+  /*
+   * Tidak ada lagu aktif
+   */
+  if (!Player.current) {
+
+    if (!Player.queue.length) {
+      return false;
     }
+
+    const index =
+      Player.queueIndex >= 0
+        ? Player.queueIndex
+        : 0;
+
+    Player.queueIndex = index;
+
+    return playTrack(
+      Player.queue[index],
+      {
+        queueIndex: index
+      }
+    );
+  }
+
+  /*
+   * Player belum siap
+   */
+  if (
+    !Player.ytPlayer ||
+    !Player.ytReady
+  ) {
+    toast(
+      'YouTube Player belum siap.',
+      'error'
+    );
 
     return false;
   }
 
   try {
-    const player =
-      await initYouTubePlayer();
 
-    if (
-      !player
-    ) {
-      return false;
-    }
+    const player =
+      Player.ytPlayer;
+
+    let currentId = '';
+
+    try {
+      currentId =
+        player.getVideoData()
+          ?.video_id || '';
+    } catch {}
 
     /*
-     * If the current video is already loaded,
-     * resume it instead of loading again.
+     * Lagu yang sama -> RESUME
      */
-
-    const currentId =
-      typeof player.getVideoData ===
-      'function'
-        ? player.getVideoData()
-            ?.video_id
-        : null;
-
     if (
       currentId ===
       Player.current.videoId
     ) {
+
       player.playVideo();
 
-      Player.playing =
-        true;
+      Player.playing = true;
+      Player.loading = false;
 
-      updatePlayButtons(
-        true
-      );
+      updatePlayButtons(true);
 
       updateMediaSessionPlaybackState(
         'playing'
@@ -1419,10 +1395,15 @@ async function playCurrent() {
       return true;
     }
 
+    /*
+     * Lagu berbeda
+     */
     return playTrack(
       Player.current
     );
+
   } catch (error) {
+
     console.error(
       '[playCurrent]',
       error
@@ -1431,7 +1412,6 @@ async function playCurrent() {
     return false;
   }
 }
-
 
 /* ============================================================
    PAUSE
@@ -1477,24 +1457,63 @@ function pauseTrack() {
    ============================================================ */
 
 async function togglePlay() {
-  if (
-    Player.loading
-  ) {
+
+  if (Player.playing) {
+    pauseTrack();
     return;
   }
 
+  /*
+   * Kalau player sudah ready,
+   * play langsung.
+   */
   if (
-    Player.playing
+    Player.ytPlayer &&
+    Player.ytReady &&
+    Player.current
   ) {
-    pauseTrack();
 
-    return;
+    try {
+
+      const player =
+        Player.ytPlayer;
+
+      const currentId =
+        player.getVideoData()
+          ?.video_id || '';
+
+      if (
+        currentId ===
+        Player.current.videoId
+      ) {
+
+        player.playVideo();
+
+        Player.playing = true;
+
+        updatePlayButtons(true);
+
+        updateMediaSessionPlaybackState(
+          'playing'
+        );
+
+        startProgressTimer();
+
+        return;
+      }
+
+    } catch (error) {
+
+      console.warn(
+        '[togglePlay]',
+        error
+      );
+
+    }
   }
 
   await playCurrent();
 }
-
-
 /* ============================================================
    NEXT TRACK
    ============================================================ */
